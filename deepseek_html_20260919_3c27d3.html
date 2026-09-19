@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SubExtract — Trích xuất phụ đề từ video</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- MP4Box.js: trích xuất phụ đề mềm -->
+<script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
+<!-- FFmpeg.wasm: trích xuất khung hình -->
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<!-- Tesseract.js: OCR -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root { --primary: #4f46e5; }
+  body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  .btn { transition: all .15s; }
+  .btn:active { transform: scale(.97); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .drop-active { border-color: var(--primary) !important; background: #eef2ff !important; }
+  .scroll::-webkit-scrollbar { width: 6px; }
+  .scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  .cue-item { transition: background .15s; }
+  .cue-item:hover { background: #f8fafc; }
+  .progress-bar { height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
+  .progress-bar > div { height: 100%; background: var(--primary); transition: width .3s; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-30">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
+    <div class="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-lg">S</div>
+    <div>
+      <h1 class="font-bold text-lg leading-tight">SubExtract</h1>
+      <p class="text-xs text-slate-500">Trích xuất phụ đề từ video — 100% trên trình duyệt</p>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-4 py-6">
+
+  <!-- BƯỚC 1 -->
+  <section id="step1" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+    <h2 class="font-semibold text-lg mb-4 flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">1</span>
+      Tải video lên
+    </h2>
+    <div id="dropZone" class="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-indigo-400 transition">
+      <div class="text-5xl mb-3">🎬</div>
+      <p class="font-medium text-lg">Kéo thả video vào đây</p>
+      <p class="text-sm text-slate-500 mt-1">Hỗ trợ MP4, MKV, WebM, MOV, AVI</p>
+      <input type="file" id="videoInput" class="hidden" accept="video/*,.mkv">
+      <button class="mt-5 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium text-sm">Chọn video</button>
+    </div>
+    <div id="videoInfo" class="hidden mt-4 p-4 bg-slate-50 rounded-lg">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div class="flex items-center gap-3">
+          <span class="text-2xl">🎞️</span>
+          <div>
+            <p id="fileName" class="font-medium text-sm"></p>
+            <p id="fileMeta" class="text-xs text-slate-500"></p>
+          </div>
+        </div>
+        <button id="btnChangeVideo" class="btn px-3 py-1.5 text-sm bg-slate-200 hover:bg-slate-300 rounded-lg">Đổi video</button>
+      </div>
+      <video id="videoPreview" controls class="w-full mt-4 rounded-lg bg-black max-h-64 hidden"></video>
+    </div>
+  </section>
+
+  <!-- BƯỚC 2 -->
+  <section id="step2" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6 hidden">
+    <h2 class="font-semibold text-lg mb-4 flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">2</span>
+      Chọn phương pháp trích xuất
+    </h2>
+    <div class="grid md:grid-cols-2 gap-4 mb-5">
+      <label class="cursor-pointer">
+        <input type="radio" name="method" value="auto" class="hidden peer" checked>
+        <div class="border-2 border-slate-200 peer-checked:border-indigo-500 peer-checked:bg-indigo-50 rounded-xl p-4 transition">
+          <div class="font-medium mb-1">🔍 Tự động phát hiện</div>
+          <p class="text-sm text-slate-500">Thử trích xuất phụ đề mềm trước, nếu không có sẽ chuyển sang OCR</p>
+        </div>
+      </label>
+      <label class="cursor-pointer">
+        <input type="radio" name="method" value="hard" class="hidden peer">
+        <div class="border-2 border-slate-200 peer-checked:border-indigo-500 peer-checked:bg-indigo-50 rounded-xl p-4 transition">
+          <div class="font-medium mb-1">🖼️ Chỉ OCR phụ đề cứng</div>
+          <p class="text-sm text-slate-500">Bỏ qua track phụ đề mềm, chỉ nhận dạng chữ từ hình ảnh</p>
+        </div>
+      </label>
+    </div>
+
+    <div id="ocrOptions" class="border border-slate-200 rounded-xl p-4 bg-slate-50">
+      <h3 class="font-medium text-sm mb-3">⚙️ Tùy chọn OCR</h3>
+      <div class="grid md:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Ngôn ngữ phụ đề</label>
+          <select id="ocrLang" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-white">
+            <option value="eng">English</option>
+            <option value="vie">Tiếng Việt</option>
+            <option value="chi_sim">中文 (Giản thể)</option>
+            <option value="chi_tra">中文 (Phồn thể)</option>
+            <option value="jpn">日本語</option>
+            <option value="kor">한국어</option>
+            <option value="fra">Français</option>
+            <option value="deu">Deutsch</option>
+            <option value="spa">Español</option>
+            <option value="por">Português</option>
+            <option value="rus">Русский</option>
+            <option value="tha">ไทย</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Vùng phụ đề <span id="cropLabel" class="font-mono">25%</span></label>
+          <input id="cropBottom" type="range" min="10" max="50" value="25" class="w-full mt-2" oninput="document.getElementById('cropLabel').textContent=this.value+'%'">
+          <p class="text-xs text-slate-400 mt-1">Phần trăm chiều cao video (tính từ dưới lên)</p>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Tần suất lấy mẫu (giây/frame)</label>
+          <input id="frameInterval" type="number" value="0.5" min="0.2" max="3" step="0.1" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-indigo-500">
+          <p class="text-xs text-slate-400 mt-1">Nhỏ hơn = chính xác hơn nhưng chậm hơn</p>
+        </div>
+      </div>
+    </div>
+
+    <button id="btnExtract" class="btn w-full mt-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium text-lg">🚀 Bắt đầu trích xuất</button>
+  </section>
+
+  <!-- BƯỚC 3 -->
+  <section id="step3" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6 hidden">
+    <h2 class="font-semibold text-lg mb-4 flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">3</span>
+      Đang xử lý...
+    </h2>
+    <div class="space-y-4">
+      <div>
+        <div class="flex justify-between text-sm mb-1">
+          <span id="progressStage" class="font-medium">Đang khởi tạo...</span>
+          <span id="progressPercent" class="text-slate-500">0%</span>
+        </div>
+        <div class="progress-bar"><div id="progressFill" style="width: 0%"></div></div>
+      </div>
+      <div id="progressLog" class="bg-slate-900 text-green-400 font-mono text-xs p-3 rounded-lg max-h-40 overflow-y-auto scroll"></div>
+    </div>
+  </section>
+
+  <!-- BƯỚC 4 -->
+  <section id="step4" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 hidden">
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+      <h2 class="font-semibold text-lg flex items-center gap-2">
+        <span class="w-6 h-6 rounded-full bg-green-500 text-white text-xs flex items-center justify-center">✓</span>
+        Kết quả: <span id="resultCount">0</span> dòng
+      </h2>
+      <div class="flex gap-2">
+        <select id="exportFormat" class="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+          <option value="srt">SRT</option>
+          <option value="vtt">VTT</option>
+          <option value="ass">ASS</option>
+          <option value="txt">TXT (chỉ text)</option>
+        </select>
+        <button id="btnDownload" class="btn px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium">⬇ Tải xuống</button>
+        <button id="btnNewVideo" class="btn px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm">Video mới</button>
+      </div>
+    </div>
+    <div id="resultList" class="scroll max-h-96 overflow-y-auto border border-slate-200 rounded-xl"></div>
+  </section>
+
+</main>
+
+<div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm shadow-lg opacity-0 pointer-events-none transition-opacity z-50"></div>
+
+<script>
+/* =========================================================
+   TIỆN ÍCH
+   ========================================================= */
+const $ = id => document.getElementById(id);
+const pad = (n, l) => String(n).padStart(l, '0');
+
+function msToTime(ms, fmt) {
+  ms = Math.max(0, Math.round(ms || 0));
+  const h  = Math.floor(ms / 3600000);
+  const m  = Math.floor((ms % 3600000) / 60000);
+  const s  = Math.floor((ms % 60000) / 1000);
+  const mm = ms % 1000;
+  if (fmt === 'srt') return `${pad(h,2)}:${pad(m,2)}:${pad(s,2)},${pad(mm,3)}`;
+  if (fmt === 'vtt') return `${pad(h,2)}:${pad(m,2)}:${pad(s,2)}.${pad(mm,3)}`;
+  if (fmt === 'ass') return `${h}:${pad(m,2)}:${pad(s,2)}.${pad(Math.floor(mm/10),2)}`;
+  return `${pad(h,2)}:${pad(m,2)}:${pad(s,2)}`;
+}
+
+const escapeHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.style.opacity = '0', 2500);
+}
+
+/* =========================================================
+   TRẠNG THÁI
+   ========================================================= */
+const state = {
+  videoFile: null,
+  videoDuration: 0,
+  cues: [],
+  baseName: 'subtitle'
+};
+
+/* =========================================================
+   BƯỚC 1: TẢI VIDEO
+   ========================================================= */
+const dropZone = $('dropZone');
+const videoInput = $('videoInput');
+
+dropZone.addEventListener('click', () => videoInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drop-active'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drop-active'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drop-active');
+  if (e.dataTransfer.files.length) handleVideo(e.dataTransfer.files[0]);
+});
+videoInput.addEventListener('change', e => {
+  if (e.target.files.length) handleVideo(e.target.files[0]);
+});
+
+function handleVideo(file) {
+  if (!file.type.startsWith('video/') && !file.name.match(/\.(mp4|mkv|webm|mov|avi)$/i)) {
+    return toast('⚠️ Vui lòng chọn file video');
+  }
+  state.videoFile = file;
+  state.baseName = file.name.replace(/\.[^.]+$/, '');
+
+  $('fileName').textContent = file.name;
+  $('fileMeta').textContent = (file.size / 1024 / 1024).toFixed(1) + ' MB';
+  $('videoInfo').classList.remove('hidden');
+  dropZone.parentElement.classList.add('hidden');
+
+  const url = URL.createObjectURL(file);
+  const preview = $('videoPreview');
+  preview.src = url;
+  preview.classList.remove('hidden');
+  preview.onloadedmetadata = () => {
+    state.videoDuration = preview.duration;
+    $('fileMeta').textContent += ` · ${Math.round(preview.duration)} giây`;
+  };
+
+  $('step2').classList.remove('hidden');
+  $('step3').classList.add('hidden');
+  $('step4').classList.add('hidden');
+  $('step2').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+$('btnChangeVideo').onclick = () => {
+  state.videoFile = null;
+  $('videoInfo').classList.add('hidden');
+  dropZone.parentElement.classList.remove('hidden');
+  $('step2').classList.add('hidden');
+  $('step3').classList.add('hidden');
+  $('step4').classList.add('hidden');
+  videoInput.value = '';
+  $('videoPreview').src = '';
+};
+
+/* =========================================================
+   TRÍCH XUẤT PHỤ ĐỀ MỀM (MP4Box.js)
+   ========================================================= */
+function extractSoftSubtitles(file) {
+  return new Promise((resolve, reject) => {
+    const mp4boxfile = MP4Box.createFile();
+    const reader = new FileReader();
+    let extractedCues = [];
+    let settled = false;
+
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      fn(arg);
+    };
+
+    mp4boxfile.onReady = (info) => {
+      const tracks = info.tracks.filter(t =>
+        t.type === 'text' || t.type === 'sbtl' ||
+        (t.codec && (t.codec.includes('tx3g') || t.codec.includes('wvtt') || t.codec.includes('stpp')))
+      );
+
+      if (!tracks.length) {
+        finish(reject, new Error('Không tìm thấy track phụ đề mềm'));
+        return;
+      }
+
+      log('📋 Tìm thấy ' + tracks.length + ' track phụ đề mềm', 'info');
+      const track = tracks[0];
+      log('📥 Đang trích xuất track #' + track.id + ' (' + (track.language || 'und') + ')', 'info');
+
+      mp4boxfile.onSamples = (id, user, samples) => {
+        samples.forEach(s => {
+          let text = '';
+          try {
+            const decoder = new TextDecoder('utf-8', { fatal: false });
+            text = decoder.decode(s.data);
+            text = text.replace(/\0/g, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').trim();
+          } catch (e) {
+            text = Array.from(new Uint8Array(s.data)).map(b => String.fromCharCode(b)).join('').replace(/\0/g, '').trim();
+          }
+
+          if (text.length > 2 && text.charCodeAt(0) < 32) {
+            const len = (text.charCodeAt(0) << 8) | text.charCodeAt(1);
+            text = (len > 0 && len < text.length) ? text.slice(2, 2 + len) : text.slice(2);
+          }
+
+          text = text.replace(/[\x00-\x1F\x7F]/g, '').trim();
+
+          if (text) {
+            extractedCues.push({
+              start: (s.cts / s.timescale) * 1000,
+              end: ((s.cts + s.duration) / s.timescale) * 1000,
+              text: text
+            });
+          }
+        });
+      };
+
+      mp4boxfile.setExtractionOptions(track.id, null, { nbSamples: 10000 });
+      mp4boxfile.start();
+
+      setTimeout(() => {
+        if (extractedCues.length === 0) {
+          finish(reject, new Error('Không trích xuất được dữ liệu phụ đề từ track'));
+        } else {
+          extractedCues.sort((a, b) => a.start - b.start);
+          finish(resolve, mergeSoftCues(extractedCues));
+        }
+      }, 2500);
+    };
+
+    mp4boxfile.onError = (e) => finish(reject, new Error('Lỗi phân tích MP4: ' + e));
+
+    reader.onload = (e) => {
+      const buffer = e.target.result;
+      buffer.fileStart = 0;
+      try {
+        mp4boxfile.appendBuffer(buffer);
+        mp4boxfile.flush();
+      } catch (err) {
+        finish(reject, new Error('Lỗi đọc file MP4: ' + err.message));
+      }
+    };
+    reader.onerror = () => finish(reject, new Error('Lỗi đọc file'));
+    reader.readAsArrayBuffer(file);
+
+    setTimeout(() => {
+      if (!settled && extractedCues.length === 0) {
+        finish(reject, new Error('Quá thời gian phân tích MP4'));
+      }
+    }, 15000);
+  });
+}
+
+function mergeSoftCues(cues) {
+  if (!cues.length) return [];
+  const merged = [];
+  let cur = { ...cues[0] };
+
+  for (let i = 1; i < cues.length; i++) {
+    const c = cues[i];
+    const prevText = cur.text.replace(/\s+/g, ' ').trim();
+    const currText = c.text.replace(/\s+/g, ' ').trim();
+
+    if (prevText === currText || (prevText && currText && (prevText.includes(currText) || currText.includes(prevText)))) {
+      cur.end = Math.max(cur.end, c.end);
+      if (currText.length > prevText.length) cur.text = c.text;
+    } else {
+      if (cur.text.trim()) merged.push(cur);
+      cur = { ...c };
+    }
+  }
+  if (cur.text.trim()) merged.push(cur);
+  return merged;
+}
+
+/* =========================================================
+   TRÍCH XUẤT PHỤ ĐỀ CỨNG (FFmpeg.wasm + Tesseract.js)
+   ========================================================= */
+let ffmpegInstance = null;
+
+async function getFFmpeg() {
+  if (ffmpegInstance && ffmpegInstance.loaded) return ffmpegInstance;
+
+  log('⚙️ Đang khởi tạo FFmpeg.wasm...', 'info');
+
+  if (typeof FFmpegWASM === 'undefined') {
+    throw new Error('Không tải được thư viện FFmpeg.wasm. Kiểm tra kết nối mạng.');
+  }
+  if (typeof FFmpegUtil === 'undefined') {
+    throw new Error('Không tải được thư viện @ffmpeg/util. Kiểm tra kết nối mạng.');
+  }
+
+  const { FFmpeg } = FFmpegWASM;
+  const { toBlobURL } = FFmpegUtil;
+
+  ffmpegInstance = new FFmpeg();
+  ffmpegInstance.on('log', ({ message }) => {
+    if (message.includes('frame=')) log('🎞️ ' + message.trim(), 'log');
+  });
+
+  const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+
+  // ★ SỬA LỖI: worker chính phải được tải từ CÙNG ORIGIN với trang.
+  // File 'ffmpeg-worker.js' cần được đặt cùng thư mục với index.html.
+  const classWorkerURL = new URL('ffmpeg-worker.js', window.location.href).href;
+  log('🔧 Worker URL: ' + classWorkerURL, 'info');
+
+  // Tải core và wasm từ CDN dưới dạng Blob URL (không bị CORS)
+  let coreURL, wasmURL;
+  try {
+    [coreURL, wasmURL] = await Promise.all([
+      toBlobURL(`${baseURL}/ffmpeg-core.js`,   'text/javascript'),
+      toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm')
+    ]);
+  } catch (e) {
+    throw new Error('Không tải được core FFmpeg từ CDN: ' + e.message);
+  }
+
+  try {
+    await ffmpegInstance.load({
+      coreURL,
+      wasmURL,
+      classWorkerURL: classWorkerURL
+    });
+  } catch (e) {
+    throw new Error('Không nạp được FFmpeg: ' + e.message);
+  }
+
+  log('✅ FFmpeg.wasm đã sẵn sàng', 'success');
+  return ffmpegInstance;
+}
+
+async function extractHardSubtitles(file, options) {
+  const { cropBottom, frameInterval, lang, onProgress } = options;
+
+  onProgress(5, 'Đang khởi tạo FFmpeg...');
+  const ff = await getFFmpeg();
+
+  onProgress(10, 'Đang tải video vào bộ nhớ...');
+  const inputName = 'input' + (file.name.match(/\.[^.]+$/) || ['.mp4'])[0];
+  const fileData = new Uint8Array(await file.arrayBuffer());
+  await ff.writeFile(inputName, fileData);
+  log(`📁 Đã nạp ${(fileData.length / 1024 / 1024).toFixed(1)} MB vào bộ nhớ ảo`, 'info');
+
+  onProgress(20, 'Đang trích xuất khung hình...');
+  const cropH = Math.round(100 - cropBottom);
+  const fps = (1 / frameInterval).toFixed(4);
+  const vf = `crop=iw:ih*${cropBottom/100}:0:ih*${cropH/100},fps=${fps},format=gray`;
+
+  log(`🎬 Trích xuất frames (crop ${cropBottom}%, fps ${fps})...`, 'info');
+
+  await ff.exec([
+    '-i', inputName,
+    '-vf', vf,
+    '-q:v', '3',
+    '-vsync', 'vfr',
+    'frame_%05d.png'
+  ]);
+
+  onProgress(40, 'Đang đọc frames...');
+  const frames = [];
+  for (let i = 1; i <= 99999; i++) {
+    const name = `frame_${String(i).padStart(5, '0')}.png`;
+    try {
+      const data = await ff.readFile(name);
+      if (data && data.length > 100) frames.push({ name, data: new Uint8Array(data), index: i - 1 });
+      await ff.deleteFile(name);
+    } catch { break; }
+  }
+
+  log(`🖼️ Đã trích xuất ${frames.length} khung hình`, 'info');
+  if (frames.length === 0) throw new Error('Không thể trích xuất khung hình từ video');
+
+  onProgress(50, `Đang OCR ${frames.length} khung hình...`);
+
+  const worker = await Tesseract.createWorker(lang, 1, {
+    logger: m => {
+      if (m.status === 'recognizing text' && m.progress > 0) {
+        onProgress(50 + m.progress * 40, `OCR: ${Math.round(m.progress * 100)}%`);
+      }
+    }
+  });
+
+  const ocrResults = [];
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i];
+    const blob = new Blob([frame.data], { type: 'image/png' });
+    try {
+      const { data: { text } } = await worker.recognize(blob);
+      const cleaned = cleanOCRText(text);
+      if (cleaned) ocrResults.push({ time: frame.index * frameInterval, text: cleaned });
+    } catch (e) {
+      log(`⚠️ Lỗi OCR frame ${i + 1}: ${e.message}`, 'warn');
+    }
+    onProgress(50 + ((i + 1) / frames.length) * 40, `OCR: ${i + 1}/${frames.length} khung hình`);
+  }
+
+  await worker.terminate();
+  log(`📝 Đã OCR ${ocrResults.length} khung hình có text`, 'info');
+
+  onProgress(92, 'Đang gộp các dòng trùng lặp...');
+  const cues = mergeHardResults(ocrResults, frameInterval);
+
+  try { await ff.deleteFile(inputName); } catch {}
+
+  onProgress(100, 'Hoàn tất!');
+  log(`✅ Tạo được ${cues.length} dòng phụ đề`, 'success');
+  return cues;
+}
+
+function cleanOCRText(text) {
+  return text
+    .replace(/\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[|\[\]{}<>_~`^]/g, '')
+    .replace(/[^\p{L}\p{N}\p{P}\p{Z}]/gu, '')
+    .trim();
+}
+
+function textSimilarity(a, b) {
+  if (a === b) return 1;
+  if (!a.length || !b.length) return 0;
+  const longer = a.length > b.length ? a : b;
+  const shorter = a.length > b.length ? b : a;
+  if (longer.length > shorter.length * 2.5) return 0;
+  let matches = 0;
+  const aChars = longer.split('');
+  const used = new Array(aChars.length).fill(false);
+  for (const ch of shorter) {
+    const idx = aChars.findIndex((c, i) => c === ch && !used[i]);
+    if (idx >= 0) { matches++; used[idx] = true; }
+  }
+  return matches / longer.length;
+}
+
+function mergeHardResults(results, frameInterval) {
+  if (!results.length) return [];
+  const cues = [];
+  let cur = { start: results[0].time * 1000, end: (results[0].time + frameInterval) * 1000, text: results[0].text };
+
+  for (let i = 1; i < results.length; i++) {
+    const r = results[i];
+    const sim = textSimilarity(
+      cur.text.toLowerCase().replace(/\s+/g, ''),
+      r.text.toLowerCase().replace(/\s+/g, '')
+    );
+    if (sim > 0.75) {
+      cur.end = (r.time + frameInterval) * 1000;
+      if (r.text.length > cur.text.length) cur.text = r.text;
+    } else {
+      if (cur.text.trim()) cues.push(cur);
+      cur = { start: r.time * 1000, end: (r.time + frameInterval) * 1000, text: r.text };
+    }
+  }
+  if (cur.text.trim()) cues.push(cur);
+  return cues.filter(c => (c.end - c.start) >= 300);
+}
+
+/* =========================================================
+   XUẤT ĐỊNH DẠNG
+   ========================================================= */
+function toSRT(cues) {
+  return cues.map((c, i) => `${i + 1}\n${msToTime(c.start,'srt')} --> ${msToTime(c.end,'srt')}\n${c.text}\n`).join('\n');
+}
+function toVTT(cues) {
+  return 'WEBVTT\n\n' + cues.map((c, i) => `${i + 1}\n${msToTime(c.start,'vtt')} --> ${msToTime(c.end,'vtt')}\n${c.text}\n`).join('\n');
+}
+function toASS(cues) {
+  const head = `[Script Info]
+Title: Exported by SubExtract
+ScriptType: v4.00+
+WrapStyle: 0
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,54,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,20,20,40,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+  return head + cues.map(c => `Dialogue: 0,${msToTime(c.start,'ass')},${msToTime(c.end,'ass')},Default,,0,0,0,,${c.text.replace(/\n/g,'\\N')}`).join('\n');
+}
+function toTXT(cues) { return cues.map(c => c.text).join('\n'); }
+
+const EXPORTERS = {
+  srt: { fn: toSRT, mime: 'text/plain' },
+  vtt: { fn: toVTT, mime: 'text/vtt' },
+  ass: { fn: toASS, mime: 'text/plain' },
+  txt: { fn: toTXT, mime: 'text/plain' }
+};
+
+function download(filename, content, mime) {
+  const blob = new Blob([content], { type: mime + ';charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* =========================================================
+   TIẾN ĐỘ & LOG
+   ========================================================= */
+function setProgress(pct, stage) {
+  $('progressFill').style.width = Math.min(100, pct) + '%';
+  $('progressPercent').textContent = Math.round(pct) + '%';
+  if (stage) $('progressStage').textContent = stage;
+}
+
+function log(msg, type = 'info') {
+  const el = $('progressLog');
+  const color = type === 'success' ? 'text-green-400'
+              : type === 'warn' ? 'text-yellow-400'
+              : type === 'error' ? 'text-red-400'
+              : 'text-green-400';
+  const line = document.createElement('div');
+  line.className = color;
+  line.textContent = '> ' + msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+/* =========================================================
+   NÚT TRÍCH XUẤT
+   ========================================================= */
+$('btnExtract').onclick = async () => {
+  if (!state.videoFile) return toast('⚠️ Chưa có video');
+
+  const method = document.querySelector('input[name="method"]:checked').value;
+  const btn = $('btnExtract');
+  btn.disabled = true;
+
+  $('step2').classList.add('hidden');
+  $('step3').classList.remove('hidden');
+  $('step3').scrollIntoView({ behavior: 'smooth' });
+  $('progressLog').innerHTML = '';
+  setProgress(0, 'Bắt đầu...');
+
+  let cues = [];
+
+  try {
+    if (method === 'auto') {
+      setProgress(2, 'Đang kiểm tra phụ đề mềm...');
+      try {
+        cues = await extractSoftSubtitles(state.videoFile);
+        log(`✅ Tìm thấy ${cues.length} dòng phụ đề mềm`, 'success');
+      } catch (e) {
+        log(`ℹ️ ${e.message}`, 'info');
+        log('→ Chuyển sang phương pháp OCR...', 'info');
+      }
+    }
+
+    if (cues.length === 0) {
+      cues = await extractHardSubtitles(state.videoFile, {
+        cropBottom: parseInt($('cropBottom').value),
+        frameInterval: parseFloat($('frameInterval').value),
+        lang: $('ocrLang').value,
+        onProgress: (pct, stage) => setProgress(pct, stage)
+      });
+    }
+
+    if (cues.length === 0) throw new Error('Không trích xuất được phụ đề nào từ video này');
+
+    state.cues = cues;
+    showResults();
+
+  } catch (err) {
+    log(`❌ Lỗi: ${err.message}`, 'error');
+    setProgress(0, 'Lỗi: ' + err.message);
+    toast('❌ ' + err.message);
+    btn.disabled = false;
+  }
+};
+
+/* =========================================================
+   HIỂN THỊ KẾT QUẢ
+   ========================================================= */
+function showResults() {
+  $('step3').classList.add('hidden');
+  $('step4').classList.remove('hidden');
+  $('step4').scrollIntoView({ behavior: 'smooth' });
+  $('resultCount').textContent = state.cues.length;
+
+  $('resultList').innerHTML = state.cues.map((c, i) => `
+    <div class="cue-item px-4 py-3 border-b border-slate-100 flex gap-3">
+      <span class="text-xs font-mono text-slate-400 w-8 pt-0.5">${i + 1}</span>
+      <div class="flex-1">
+        <div class="text-xs font-mono text-indigo-600 mb-1">
+          ${msToTime(c.start,'srt')} → ${msToTime(c.end,'srt')}
+        </div>
+        <div class="text-sm">${escapeHtml(c.text)}</div>
+      </div>
+    </div>
+  `).join('');
+
+  $('btnExtract').disabled = false;
+}
+
+/* =========================================================
+   TẢI XUỐNG / VIDEO MỚI
+   ========================================================= */
+$('btnDownload').onclick = () => {
+  if (!state.cues.length) return toast('⚠️ Chưa có phụ đề');
+  const fmt = $('exportFormat').value;
+  const { fn, mime } = EXPORTERS[fmt];
+  download(`${state.baseName}.${fmt}`, fn(state.cues), mime);
+  toast(`✅ Đã tải xuống .${fmt}`);
+};
+
+$('btnNewVideo').onclick = () => {
+  state.videoFile = null;
+  state.cues = [];
+  $('videoInfo').classList.add('hidden');
+  dropZone.parentElement.classList.remove('hidden');
+  $('step2').classList.add('hidden');
+  $('step3').classList.add('hidden');
+  $('step4').classList.add('hidden');
+  $('btnExtract').disabled = false;
+  videoInput.value = '';
+  $('videoPreview').src = '';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+</script>
+</body>
+</html>
